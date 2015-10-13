@@ -15,6 +15,7 @@
 #include <unordered_set>
 #include <list>
 #include <forward_list>
+#include <fstream>
 #include <iostream>
 #include <algorithm>
 #include <tuple>
@@ -69,6 +70,8 @@
 #include <graphene/chain/config.hpp>
 #include <graphene/chain/protocol/fee_schedule.hpp>
 
+#include <graphene/utilities/key_conversion.hpp>
+
 #include <fc/git_revision.hpp>
 
 //#define ENABLE_DEBUG_ULOGS
@@ -108,6 +111,19 @@
 #endif
 
 namespace graphene { namespace net {
+
+  node_configuration::node_configuration( const fc::path& _directory )
+    : directory( _directory )
+  {
+#ifdef GRAPHENE_TEST_NETWORK
+    uint32_t port = GRAPHENE_NET_TEST_P2P_PORT + GRAPHENE_TEST_NETWORK_VERSION;
+#else
+    uint32_t port = GRAPHENE_NET_DEFAULT_P2P_PORT;
+#endif
+    listen_endpoint.set_port( port );
+  }
+
+  node_configuration::node_configuration() {}
 
   namespace detail
   {
@@ -210,33 +226,6 @@ namespace graphene { namespace net {
     }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-    // This specifies configuration info for the local node.  It's stored as JSON
-    // in the configuration directory (application data directory)
-    struct node_configuration
-    {
-      node_configuration() : accept_incoming_connections(true), wait_if_endpoint_is_busy(true) {}
-
-      fc::ip::endpoint listen_endpoint;
-      bool accept_incoming_connections;
-      bool wait_if_endpoint_is_busy;
-      /**
-       * Originally, our p2p code just had a 'node-id' that was a random number identifying this node
-       * on the network.  This is now a private key/public key pair, where the public key is used
-       * in place of the old random node-id.  The private part is unused, but might be used in
-       * the future to support some notion of trusted peers.
-       */
-      fc::ecc::private_key private_key;
-    };
-
-
-} } } // end namespace graphene::net::detail
-FC_REFLECT(graphene::net::detail::node_configuration, (listen_endpoint)
-                                                 (accept_incoming_connections)
-                                                 (wait_if_endpoint_is_busy)
-                                                 (private_key));
-
-namespace graphene { namespace net { namespace detail {
 
     // when requesting items from peers, we want to prioritize any blocks before
     // transactions, but otherwise request items in the order we heard about them
@@ -404,7 +393,6 @@ namespace graphene { namespace net { namespace detail {
 
 #define NODE_CONFIGURATION_FILENAME      "node_config.json"
 #define POTENTIAL_PEER_DATABASE_FILENAME "peers.json"
-      fc::path             _node_configuration_directory;
       node_configuration   _node_configuration;
 
       /// stores the endpoint we're listening on.  This will be the same as
@@ -478,6 +466,8 @@ namespace graphene { namespace net { namespace detail {
        * that we might someday have a use for nodes having a private key (sent in hello messages)
        */
       node_id_t            _node_public_key;
+      fc::ecc::private_key _node_private_key;
+
       /**
        * _node_id is a random number generated each time the client is launched, used to prevent us
        * from connecting to the same client multiple times (sent in hello messages).
@@ -488,14 +478,6 @@ namespace graphene { namespace net { namespace detail {
        */
       node_id_t            _node_id;
 
-      /** if we have less than `_desired_number_of_connections`, we will try to connect with more nodes */
-      uint32_t             _desired_number_of_connections;
-      /** if we have _maximum_number_of_connections or more, we will refuse any inbound connections */
-      uint32_t             _maximum_number_of_connections;
-      /** retry connections to peers that have failed or rejected us this often, in seconds */
-      uint32_t              _peer_connection_retry_timeout;
-      /** how many seconds of inactivity are permitted before disconnecting a peer */
-      uint32_t              _peer_inactivity_timeout;
 
       fc::tcp_server       _tcp_server;
       fc::future<void>     _accept_loop_complete;
@@ -521,8 +503,6 @@ namespace graphene { namespace net { namespace detail {
       fc::rate_limiting_group _rate_limiter;
 
       uint32_t _last_reported_number_of_connections; // number of connections last reported to the client (to avoid sending duplicate messages)
-
-      bool _peer_advertising_disabled;
 
       fc::future<void> _fetch_updated_peer_lists_loop_done;
 
@@ -555,22 +535,15 @@ namespace graphene { namespace net { namespace detail {
       std::list<peer_connection_ptr> _peers_to_delete;
       fc::future<void> _delayed_peer_deletion_task_done;
 
-#ifdef ENABLE_P2P_DEBUGGING_API
-      std::set<node_id_t> _allowed_peers;
-#endif // ENABLE_P2P_DEBUGGING_API
-
       bool _node_is_shutting_down; // set to true when we begin our destructor, used to prevent us from starting new tasks while we're shutting down
-
-      unsigned _maximum_number_of_blocks_to_handle_at_one_time;
-      unsigned _maximum_number_of_sync_blocks_to_prefetch;
-      unsigned _maximum_blocks_per_peer_during_syncing;
 
       std::list<fc::future<void> > _handle_message_calls_in_progress;
 
-      node_impl(const std::string& user_agent);
+      node_impl(const std::string& user_agent, const node_configuration& cfg);
       virtual ~node_impl();
 
       void save_node_configuration();
+      void _load_configuration( const node_configuration& cfg );
 
       void p2p_network_connect_loop();
       void trigger_p2p_network_connect_loop();
@@ -708,15 +681,11 @@ namespace graphene { namespace net { namespace detail {
 
       // methods implementing node's public interface
       void set_node_delegate(node_delegate* del, fc::thread* thread_for_delegate_calls);
-      void load_configuration( const fc::path& configuration_directory );
       void listen_to_p2p_network();
       void connect_to_p2p_network();
       void add_node( const fc::ip::endpoint& ep );
       void initiate_connect_to(const peer_connection_ptr& peer);
       void connect_to_endpoint(const fc::ip::endpoint& ep);
-      void listen_on_endpoint(const fc::ip::endpoint& ep , bool wait_if_not_available);
-      void accept_incoming_connections(bool accept);
-      void listen_on_port( uint16_t port, bool wait_if_not_available );
 
       fc::ip::endpoint         get_actual_listening_endpoint() const;
       std::vector<peer_status> get_connected_peers() const;
@@ -727,19 +696,19 @@ namespace graphene { namespace net { namespace detail {
       void sync_from(const item_id& current_head_block, const std::vector<uint32_t>& hard_fork_block_numbers);
       bool is_connected() const;
       std::vector<potential_peer_record> get_potential_peers() const;
-      void set_advanced_node_parameters( const fc::variant_object& params );
 
-      fc::variant_object         get_advanced_node_parameters();
       message_propagation_data   get_transaction_propagation_data( const graphene::net::transaction_id_type& transaction_id );
       message_propagation_data   get_block_propagation_data( const graphene::net::block_id_type& block_id );
 
       node_id_t                  get_node_id() const;
-      void                       set_allowed_peers( const std::vector<node_id_t>& allowed_peers );
+      void                       disconnect_disallowed_peers();
       void                       clear_peer_database();
       void                       set_total_bandwidth_limit( uint32_t upload_bytes_per_second, uint32_t download_bytes_per_second );
-      void                       disable_peer_advertising();
       fc::variant_object         get_call_statistics() const;
       message                    get_message_for_item(const item_id& item) override;
+
+      node_parameters            get_parameters() const;
+      void                       set_parameters( const node_parameters& params );
 
       fc::variant_object         network_get_info() const;
       fc::variant_object         network_get_usage_stats() const;
@@ -777,10 +746,7 @@ namespace graphene { namespace net { namespace detail {
 # define VERIFY_CORRECT_THREAD() do {} while (0)
 #endif
 
-#define MAXIMUM_NUMBER_OF_BLOCKS_TO_HANDLE_AT_ONE_TIME 200
-#define MAXIMUM_NUMBER_OF_BLOCKS_TO_PREFETCH (10 * MAXIMUM_NUMBER_OF_BLOCKS_TO_HANDLE_AT_ONE_TIME)
-
-    node_impl::node_impl(const std::string& user_agent) :
+    node_impl::node_impl(const std::string& user_agent, const node_configuration& cfg) :
 #ifdef P2P_IN_DEDICATED_THREAD
       _thread(std::make_shared<fc::thread>("p2p")),
 #endif // P2P_IN_DEDICATED_THREAD
@@ -793,15 +759,10 @@ namespace graphene { namespace net { namespace detail {
       _items_to_fetch_sequence_counter(0),
       _recent_block_interval_in_seconds(GRAPHENE_MAX_BLOCK_INTERVAL),
       _user_agent_string(user_agent),
-      _desired_number_of_connections(GRAPHENE_NET_DEFAULT_DESIRED_CONNECTIONS),
-      _maximum_number_of_connections(GRAPHENE_NET_DEFAULT_MAX_CONNECTIONS),
-      _peer_connection_retry_timeout(GRAPHENE_NET_DEFAULT_PEER_CONNECTION_RETRY_TIME),
-      _peer_inactivity_timeout(GRAPHENE_NET_PEER_HANDSHAKE_INACTIVITY_TIMEOUT),
-      _most_recent_blocks_accepted(_maximum_number_of_connections),
+      _most_recent_blocks_accepted(GRAPHENE_NET_DEFAULT_MAX_CONNECTIONS),
       _total_number_of_unfetched_items(0),
       _rate_limiter(0, 0),
       _last_reported_number_of_connections(0),
-      _peer_advertising_disabled(false),
       _average_network_read_speed_seconds(60),
       _average_network_write_speed_seconds(60),
       _average_network_read_speed_minutes(60),
@@ -810,12 +771,10 @@ namespace graphene { namespace net { namespace detail {
       _average_network_write_speed_hours(72),
       _average_network_usage_second_counter(0),
       _average_network_usage_minute_counter(0),
-      _node_is_shutting_down(false),
-      _maximum_number_of_blocks_to_handle_at_one_time(MAXIMUM_NUMBER_OF_BLOCKS_TO_HANDLE_AT_ONE_TIME),
-      _maximum_number_of_sync_blocks_to_prefetch(MAXIMUM_NUMBER_OF_BLOCKS_TO_PREFETCH),
-      _maximum_blocks_per_peer_during_syncing(GRAPHENE_NET_MAX_BLOCKS_PER_PEER_DURING_SYNCING)
+      _node_is_shutting_down(false)
     {
       _rate_limiter.set_actual_rate_time_constant(fc::seconds(2));
+      _load_configuration( cfg );
       fc::rand_pseudo_bytes(&_node_id.data[0], (int)_node_id.size());
     }
 
@@ -854,9 +813,9 @@ namespace graphene { namespace net { namespace detail {
     void node_impl::save_node_configuration()
     {
       VERIFY_CORRECT_THREAD();
-      if( fc::exists(_node_configuration_directory ) )
+      if( fc::exists(_node_configuration.directory ) )
       {
-        fc::path configuration_file_name( _node_configuration_directory / NODE_CONFIGURATION_FILENAME );
+        fc::path configuration_file_name( _node_configuration.directory / NODE_CONFIGURATION_FILENAME );
         try
         {
           fc::json::save_to_file( _node_configuration, configuration_file_name );
@@ -913,7 +872,7 @@ namespace graphene { namespace net { namespace detail {
                  iter != _potential_peer_db.end() && is_wanting_new_connections();
                  ++iter)
             {
-              fc::microseconds delay_until_retry = fc::seconds((iter->number_of_failed_connection_attempts + 1) * _peer_connection_retry_timeout);
+              fc::microseconds delay_until_retry = fc::seconds((iter->number_of_failed_connection_attempts + 1) * _node_configuration.parameters.peer_connection_retry_timeout);
 
               if (!is_connection_to_endpoint_in_progress(iter->endpoint) &&
                   ((iter->last_connection_disposition != last_connection_failed &&
@@ -1050,7 +1009,7 @@ namespace graphene { namespace net { namespace detail {
                       // then schedule a request from this peer
                       sync_item_requests_to_send[peer].push_back(item_to_potentially_request);
                       sync_items_to_request.insert( item_to_potentially_request );
-                      if (sync_item_requests_to_send[peer].size() >= _maximum_blocks_per_peer_during_syncing)
+                      if (sync_item_requests_to_send[peer].size() >= _node_configuration.parameters.maximum_blocks_per_peer_during_syncing)
                         break;
                     }
                   }
@@ -1322,7 +1281,7 @@ namespace graphene { namespace net { namespace detail {
         // those lists yielding at our leisure later.
         ASSERT_TASK_NOT_PREEMPTED();
 
-        uint32_t handshaking_timeout = _peer_inactivity_timeout;
+        uint32_t handshaking_timeout = _node_configuration.parameters.peer_inactivity_timeout;
         fc::time_point handshaking_disconnect_threshold = fc::time_point::now() - fc::seconds(handshaking_timeout);
         for( const peer_connection_ptr handshaking_peer : _handshaking_connections )
           if( handshaking_peer->connection_initiation_time < handshaking_disconnect_threshold &&
@@ -1470,7 +1429,8 @@ namespace graphene { namespace net { namespace detail {
         fc::exception detailed_error( FC_LOG_MESSAGE(warn, "Disconnecting due to inactivity",
                                                       ( "last_message_received_seconds_ago", (peer->get_last_message_received_time() - fc::time_point::now() ).count() / fc::seconds(1 ).count() )
                                                       ( "last_message_sent_seconds_ago", (peer->get_last_message_sent_time() - fc::time_point::now() ).count() / fc::seconds(1 ).count() )
-                                                      ( "inactivity_timeout", _active_connections.find(peer ) != _active_connections.end() ? _peer_inactivity_timeout * 10 : _peer_inactivity_timeout ) ) );
+                                                      // ( "inactivity_timeout", _active_connections.find(peer ) != _active_connections.end() ? _configuration.peer_inactivity_timeout * 10 : _configuration.peer_inactivity_timeout ) ) );
+                                                      ( "inactivity_timeout", _node_configuration.parameters.peer_inactivity_timeout ) ) );
         disconnect_from_peer( peer.get(), "Disconnecting due to inactivity", false, detailed_error );
       }
       peers_to_disconnect_gently.clear();
@@ -1642,13 +1602,13 @@ namespace graphene { namespace net { namespace detail {
     bool node_impl::is_accepting_new_connections()
     {
       VERIFY_CORRECT_THREAD();
-      return !_p2p_network_connect_loop_done.canceled() && get_number_of_connections() <= _maximum_number_of_connections;
+      return !_p2p_network_connect_loop_done.canceled() && get_number_of_connections() <= _node_configuration.parameters.maximum_number_of_connections;
     }
 
     bool node_impl::is_wanting_new_connections()
     {
       VERIFY_CORRECT_THREAD();
-      return !_p2p_network_connect_loop_done.canceled() && get_number_of_connections() < _desired_number_of_connections;
+      return !_p2p_network_connect_loop_done.canceled() && get_number_of_connections() < _node_configuration.parameters.desired_number_of_connections;
     }
 
     uint32_t node_impl::get_number_of_connections()
@@ -1715,8 +1675,8 @@ namespace graphene { namespace net { namespace detail {
       VERIFY_CORRECT_THREAD();
       dlog("Currently have ${current} of [${desired}/${max}] connections",
            ("current", get_number_of_connections())
-           ("desired", _desired_number_of_connections)
-           ("max", _maximum_number_of_connections));
+           ("desired", _node_configuration.parameters.desired_number_of_connections)
+           ("max", _node_configuration.parameters.maximum_number_of_connections));
       dlog("   my id is ${id}", ("id", _node_id));
 
       for (const peer_connection_ptr& active_connection : _active_connections)
@@ -1995,9 +1955,8 @@ namespace graphene { namespace net { namespace detail {
                ("peer", originating_peer->get_remote_endpoint())
                ("id", originating_peer->node_id));
         }
-#ifdef ENABLE_P2P_DEBUGGING_API
-        else if(!_allowed_peers.empty() &&
-                _allowed_peers.find(originating_peer->node_id) == _allowed_peers.end())
+        else if(!_node_configuration.parameters.allowed_peers.empty() &&
+                _node_configuration.parameters.allowed_peers.find(originating_peer->node_id) == _node_configuration.parameters.allowed_peers.end())
         {
           connection_rejected_message connection_rejected(_user_agent_string, core_protocol_version,
                                                           originating_peer->get_socket().remote_endpoint(),
@@ -2007,7 +1966,6 @@ namespace graphene { namespace net { namespace detail {
           originating_peer->send_message( message(connection_rejected ) );
           dlog( "Received a hello_message from peer ${peer} who isn't in my allowed_peers list, rejection", ("peer", originating_peer->get_remote_endpoint() ) );
         }
-#endif // ENABLE_P2P_DEBUGGING_API
         else
         {
           // whether we're planning on accepting them as a peer or not, they seem to be a valid node,
@@ -2143,7 +2101,7 @@ namespace graphene { namespace net { namespace detail {
       dlog("Received an address request message");
 
       address_message reply;
-      if (!_peer_advertising_disabled)
+      if (!_node_configuration.parameters.peer_advertising_disabled)
       {
         reply.addresses.reserve(_active_connections.size());
         for (const peer_connection_ptr& active_peer : _active_connections)
@@ -3180,7 +3138,7 @@ namespace graphene { namespace net { namespace detail {
       }
 
       dlog("in process_backlog_of_sync_blocks");
-      if (_handle_message_calls_in_progress.size() >= _maximum_number_of_blocks_to_handle_at_one_time)
+      if (_handle_message_calls_in_progress.size() >= _node_configuration.parameters.maximum_number_of_blocks_to_handle_at_one_time)
       {
         dlog("leaving process_backlog_of_sync_blocks because we're already processing too many blocks");
         return; // we will be rescheduled when the next block finishes its processing
@@ -3264,13 +3222,13 @@ namespace graphene { namespace net { namespace detail {
           } // end if potential_first_block
         } // end for each block in _received_sync_items
 
-        if (_handle_message_calls_in_progress.size() >= _maximum_number_of_blocks_to_handle_at_one_time)
+        if (_handle_message_calls_in_progress.size() >= _node_configuration.parameters.maximum_number_of_blocks_to_handle_at_one_time)
         {
           dlog("stopping processing sync block backlog because we have ${count} blocks in progress",
                ("count", _handle_message_calls_in_progress.size()));
           //ulog("stopping processing sync block backlog because we have ${count} blocks in progress, total on hand: ${received}",
           //     ("count", _handle_message_calls_in_progress.size())("received", _received_sync_items.size()));
-          if (_received_sync_items.size() >= _maximum_number_of_sync_blocks_to_prefetch)
+          if (_received_sync_items.size() >= _node_configuration.parameters.maximum_number_of_sync_blocks_to_prefetch)
             _suspend_fetching_sync_blocks = true;
           break;
         }
@@ -4185,7 +4143,7 @@ namespace graphene { namespace net { namespace detail {
       fc::sha256::encoder shared_secret_encoder;
       fc::sha512 shared_secret = peer->get_shared_secret();
       shared_secret_encoder.write(shared_secret.data(), sizeof(shared_secret));
-      fc::ecc::compact_signature signature = _node_configuration.private_key.sign_compact(shared_secret_encoder.result());
+      fc::ecc::compact_signature signature = _node_private_key.sign_compact(shared_secret_encoder.result());
 
       // in the hello messsage, we send three things:
       //  ip address
@@ -4339,56 +4297,58 @@ namespace graphene { namespace net { namespace detail {
         _chain_id = del->get_chain_id();
     }
 
-    void node_impl::load_configuration( const fc::path& configuration_directory )
+    void node_impl::_load_configuration( const node_configuration& cfg )
     {
-      VERIFY_CORRECT_THREAD();
-      _node_configuration_directory = configuration_directory;
-      fc::path configuration_file_name( _node_configuration_directory / NODE_CONFIGURATION_FILENAME );
-      bool node_configuration_loaded = false;
-      if( fc::exists(configuration_file_name ) )
+      // WARNING:  This method is not thread-safe!!!
+      _node_configuration = cfg;
+
+      if( cfg.node_private_key.valid() )
       {
-        try
-        {
-          _node_configuration = fc::json::from_file( configuration_file_name ).as<detail::node_configuration>();
-          ilog( "Loaded configuration from file ${filename}", ("filename", configuration_file_name ) );
-
-          if( _node_configuration.private_key == fc::ecc::private_key() )
-            _node_configuration.private_key = fc::ecc::private_key::generate();
-
-          node_configuration_loaded = true;
-        }
-        catch ( fc::parse_error_exception& parse_error )
-        {
-          elog( "malformed node configuration file ${filename}: ${error}",
-               ( "filename", configuration_file_name )("error", parse_error.to_detail_string() ) );
-        }
-        catch ( fc::exception& except )
-        {
-          elog( "unexpected exception while reading configuration file ${filename}: ${error}",
-               ( "filename", configuration_file_name )("error", except.to_detail_string() ) );
-        }
+         _node_private_key = *(cfg.node_private_key);
       }
-
-      if( !node_configuration_loaded )
+      else if( cfg.directory == fc::path() )
       {
-        _node_configuration = detail::node_configuration();
-
-#ifdef GRAPHENE_TEST_NETWORK
-        uint32_t port = GRAPHENE_NET_TEST_P2P_PORT + GRAPHENE_TEST_NETWORK_VERSION;
-#else
-        uint32_t port = GRAPHENE_NET_DEFAULT_P2P_PORT;
-#endif
-        _node_configuration.listen_endpoint.set_port( port );
-        _node_configuration.accept_incoming_connections = true;
-        _node_configuration.wait_if_endpoint_is_busy = false;
-
-        ilog( "generating new private key for this node" );
-        _node_configuration.private_key = fc::ecc::private_key::generate();
+         _node_private_key = fc::ecc::private_key::generate();
       }
+      else
+      {
+         fc::path privkey_filename( cfg.directory / "node.key" );
 
-      _node_public_key = _node_configuration.private_key.get_public_key().serialize();
+         auto create_new_key = [&]()
+         {
+           _node_private_key = fc::ecc::private_key::generate();
+           // TODO:  Protect private key with chmod 600
+           std::ofstream privkey_file(
+              privkey_filename.generic_string().c_str(),
+              std::ios::out | std::ios::binary | std::ios::trunc );
+           privkey_file << graphene::utilities::key_to_wif( _node_private_key ) << std::endl;
+           privkey_file.close();
+         };
 
-      fc::path potential_peer_database_file_name(_node_configuration_directory / POTENTIAL_PEER_DATABASE_FILENAME);
+         if( fc::exists( privkey_filename ) )
+         {
+           std::string wif;
+           std::ifstream privkey_file(
+              privkey_filename.generic_string().c_str(),
+              std::ios::in | std::ios::binary );
+           privkey_file >> wif;   // stream extraction eliminates whitespace
+           fc::optional< fc::ecc::private_key > privkey_from_file = graphene::utilities::wif_to_key( wif );
+           if( privkey_from_file.valid() )
+           {
+             _node_private_key = *privkey_from_file;
+           }
+           else
+           {
+             elog( "Couldn't read node.key, creating new p2p key" );
+             create_new_key();
+           }
+         }
+         else
+           create_new_key();
+      }
+      _node_public_key = _node_private_key.get_public_key().serialize();
+
+      fc::path potential_peer_database_file_name( cfg.directory / POTENTIAL_PEER_DATABASE_FILENAME );
       try
       {
         _potential_peer_db.open(potential_peer_database_file_name);
@@ -4398,11 +4358,12 @@ namespace graphene { namespace net { namespace detail {
         {
           potential_peer_record updated_peer_record = *itr;
           updated_peer_record.last_connection_attempt_time = std::min<fc::time_point_sec>(updated_peer_record.last_connection_attempt_time,
-                                                                                          fc::time_point::now() - fc::seconds(_peer_connection_retry_timeout));
+                                                                                          fc::time_point::now() - fc::seconds(_node_configuration.parameters.peer_connection_retry_timeout));
           _potential_peer_db.update_entry(updated_peer_record);
         }
 
-        trigger_p2p_network_connect_loop();
+        //trigger_p2p_network_connect_loop();
+        _potential_peer_database_updated = true;
       }
       catch (fc::exception& except)
       {
@@ -4541,7 +4502,7 @@ namespace graphene { namespace net { namespace detail {
       // if we've recently connected to this peer, reset the last_connection_attempt_time to allow
       // us to immediately retry this peer
       updated_peer_record.last_connection_attempt_time = std::min<fc::time_point_sec>(updated_peer_record.last_connection_attempt_time,
-                                                                                      fc::time_point::now() - fc::seconds(_peer_connection_retry_timeout));
+                                                                                      fc::time_point::now() - fc::seconds(_node_configuration.parameters.peer_connection_retry_timeout));
       _add_once_node_list.push_back(updated_peer_record);
       _potential_peer_db.update_entry(updated_peer_record);
       trigger_p2p_network_connect_loop();
@@ -4638,7 +4599,7 @@ namespace graphene { namespace net { namespace detail {
       ilog( "----------------- PEER STATUS UPDATE --------------------" );
       ilog( " number of peers: ${active} active, ${handshaking}, ${closing} closing.  attempting to maintain ${desired} - ${maximum} peers",
            ( "active", _active_connections.size() )("handshaking", _handshaking_connections.size() )("closing",_closing_connections.size() )
-           ( "desired", _desired_number_of_connections )("maximum", _maximum_number_of_connections ) );
+           ( "desired", _node_configuration.parameters.desired_number_of_connections )("maximum", _node_configuration.parameters.maximum_number_of_connections ) );
       for( const peer_connection_ptr& peer : _active_connections )
       {
         ilog( "       active peer ${endpoint} peer_is_in_sync_with_us:${in_sync_with_us} we_are_in_sync_with_peer:${in_sync_with_them}",
@@ -4726,29 +4687,6 @@ namespace graphene { namespace net { namespace detail {
       else
         dlog("Disconnecting from ${peer} for ${reason}", ("peer",peer_to_disconnect->get_remote_endpoint()) ("reason",reason_for_disconnect));
       // peer_to_disconnect->close_connection();
-    }
-
-    void node_impl::listen_on_endpoint( const fc::ip::endpoint& ep, bool wait_if_not_available )
-    {
-      VERIFY_CORRECT_THREAD();
-      _node_configuration.listen_endpoint = ep;
-      _node_configuration.wait_if_endpoint_is_busy = wait_if_not_available;
-      save_node_configuration();
-    }
-
-    void node_impl::accept_incoming_connections(bool accept)
-    {
-      VERIFY_CORRECT_THREAD();
-      _node_configuration.accept_incoming_connections = accept;
-      save_node_configuration();
-    }
-
-    void node_impl::listen_on_port( uint16_t port, bool wait_if_not_available )
-    {
-      VERIFY_CORRECT_THREAD();
-      _node_configuration.listen_endpoint = fc::ip::endpoint( fc::ip::address(), port );
-      _node_configuration.wait_if_endpoint_is_busy = wait_if_not_available;
-      save_node_configuration();
     }
 
     fc::ip::endpoint node_impl::get_actual_listening_endpoint() const
@@ -4890,43 +4828,6 @@ namespace graphene { namespace net { namespace detail {
       return result;
     }
 
-    void node_impl::set_advanced_node_parameters(const fc::variant_object& params)
-    {
-      VERIFY_CORRECT_THREAD();
-      if (params.contains("peer_connection_retry_timeout"))
-        _peer_connection_retry_timeout = params["peer_connection_retry_timeout"].as<uint32_t>();
-      if (params.contains("desired_number_of_connections"))
-        _desired_number_of_connections = params["desired_number_of_connections"].as<uint32_t>();
-      if (params.contains("maximum_number_of_connections"))
-        _maximum_number_of_connections = params["maximum_number_of_connections"].as<uint32_t>();
-      if (params.contains("maximum_number_of_blocks_to_handle_at_one_time"))
-        _maximum_number_of_blocks_to_handle_at_one_time = params["maximum_number_of_blocks_to_handle_at_one_time"].as<uint32_t>();
-      if (params.contains("maximum_number_of_sync_blocks_to_prefetch"))
-        _maximum_number_of_sync_blocks_to_prefetch = params["maximum_number_of_sync_blocks_to_prefetch"].as<uint32_t>();
-      if (params.contains("maximum_blocks_per_peer_during_syncing"))
-        _maximum_blocks_per_peer_during_syncing = params["maximum_blocks_per_peer_during_syncing"].as<uint32_t>();
-
-      _desired_number_of_connections = std::min(_desired_number_of_connections, _maximum_number_of_connections);
-
-      while (_active_connections.size() > _maximum_number_of_connections)
-        disconnect_from_peer(_active_connections.begin()->get(),
-                             "I have too many connections open");
-      trigger_p2p_network_connect_loop();
-    }
-
-    fc::variant_object node_impl::get_advanced_node_parameters()
-    {
-      VERIFY_CORRECT_THREAD();
-      fc::mutable_variant_object result;
-      result["peer_connection_retry_timeout"] = _peer_connection_retry_timeout;
-      result["desired_number_of_connections"] = _desired_number_of_connections;
-      result["maximum_number_of_connections"] = _maximum_number_of_connections;
-      result["maximum_number_of_blocks_to_handle_at_one_time"] = _maximum_number_of_blocks_to_handle_at_one_time;
-      result["maximum_number_of_sync_blocks_to_prefetch"] = _maximum_number_of_sync_blocks_to_prefetch;
-      result["maximum_blocks_per_peer_during_syncing"] = _maximum_blocks_per_peer_during_syncing;
-      return result;
-    }
-
     message_propagation_data node_impl::get_transaction_propagation_data( const graphene::net::transaction_id_type& transaction_id )
     {
       VERIFY_CORRECT_THREAD();
@@ -4944,20 +4845,18 @@ namespace graphene { namespace net { namespace detail {
       VERIFY_CORRECT_THREAD();
       return _node_id;
     }
-    void node_impl::set_allowed_peers(const std::vector<node_id_t>& allowed_peers)
+    void node_impl::disconnect_disallowed_peers()
     {
       VERIFY_CORRECT_THREAD();
-#ifdef ENABLE_P2P_DEBUGGING_API
-      _allowed_peers.clear();
-      _allowed_peers.insert(allowed_peers.begin(), allowed_peers.end());
-      std::list<peer_connection_ptr> peers_to_disconnect;
-      if (!_allowed_peers.empty())
-        for (const peer_connection_ptr& peer : _active_connections)
-          if (_allowed_peers.find(peer->node_id) == _allowed_peers.end())
-            peers_to_disconnect.push_back(peer);
+      if (_node_configuration.parameters.allowed_peers.empty())
+        return;
+      std::vector<peer_connection_ptr> peers_to_disconnect;
+      peers_to_disconnect.reserve( _active_connections.size() );
+      for (const peer_connection_ptr& peer : _active_connections)
+        if (_node_configuration.parameters.allowed_peers.find(peer->node_id) == _node_configuration.parameters.allowed_peers.end())
+          peers_to_disconnect.push_back(peer);
       for (const peer_connection_ptr& peer : peers_to_disconnect)
         disconnect_from_peer(peer.get(), "My allowed_peers list has changed, and you're no longer allowed.  Bye.");
-#endif // ENABLE_P2P_DEBUGGING_API
     }
     void node_impl::clear_peer_database()
     {
@@ -4972,16 +4871,22 @@ namespace graphene { namespace net { namespace detail {
       _rate_limiter.set_download_limit( download_bytes_per_second );
     }
 
-    void node_impl::disable_peer_advertising()
-    {
-      VERIFY_CORRECT_THREAD();
-      _peer_advertising_disabled = true;
-    }
-
     fc::variant_object node_impl::get_call_statistics() const
     {
       VERIFY_CORRECT_THREAD();
       return _delegate->get_call_statistics();
+    }
+
+    node_parameters node_impl::get_parameters() const
+    {
+      return _node_configuration.parameters;
+    }
+    
+    void node_impl::set_parameters( const node_parameters& params )
+    {
+      if( params.allowed_peers != _node_configuration.parameters.allowed_peers )
+        disconnect_disallowed_peers();
+      _node_configuration.parameters = params;
     }
 
     fc::variant_object node_impl::network_get_info() const
@@ -5051,8 +4956,8 @@ namespace graphene { namespace net { namespace detail {
     return my->method_name(__VA_ARGS__)
 #endif // P2P_IN_DEDICATED_THREAD
 
-  node::node(const std::string& user_agent) :
-    my(new detail::node_impl(user_agent))
+  node::node(const std::string& user_agent, const node_configuration& cfg) :
+    my(new detail::node_impl(user_agent, cfg))
   {
   }
 
@@ -5064,11 +4969,6 @@ namespace graphene { namespace net { namespace detail {
   {
     fc::thread* delegate_thread = &fc::thread::current();
     INVOKE_IN_IMPL(set_node_delegate, del, delegate_thread);
-  }
-
-  void node::load_configuration( const fc::path& configuration_directory )
-  {
-    INVOKE_IN_IMPL(load_configuration, configuration_directory);
   }
 
   void node::listen_to_p2p_network()
@@ -5089,21 +4989,6 @@ namespace graphene { namespace net { namespace detail {
   void node::connect_to_endpoint( const fc::ip::endpoint& remote_endpoint )
   {
     INVOKE_IN_IMPL(connect_to_endpoint, remote_endpoint);
-  }
-
-  void node::listen_on_endpoint(const fc::ip::endpoint& ep , bool wait_if_not_available)
-  {
-    INVOKE_IN_IMPL(listen_on_endpoint, ep, wait_if_not_available);
-  }
-
-  void node::accept_incoming_connections(bool accept)
-  {
-    INVOKE_IN_IMPL(accept_incoming_connections, accept);
-  }
-
-  void node::listen_on_port( uint16_t port, bool wait_if_not_available )
-  {
-    INVOKE_IN_IMPL(listen_on_port, port, wait_if_not_available);
   }
 
   fc::ip::endpoint node::get_actual_listening_endpoint() const
@@ -5141,16 +5026,6 @@ namespace graphene { namespace net { namespace detail {
     INVOKE_IN_IMPL(get_potential_peers);
   }
 
-  void node::set_advanced_node_parameters( const fc::variant_object& params )
-  {
-    INVOKE_IN_IMPL(set_advanced_node_parameters, params);
-  }
-
-  fc::variant_object node::get_advanced_node_parameters()
-  {
-    INVOKE_IN_IMPL(get_advanced_node_parameters);
-  }
-
   message_propagation_data node::get_transaction_propagation_data( const graphene::net::transaction_id_type& transaction_id )
   {
     INVOKE_IN_IMPL(get_transaction_propagation_data, transaction_id);
@@ -5166,11 +5041,6 @@ namespace graphene { namespace net { namespace detail {
     INVOKE_IN_IMPL(get_node_id);
   }
 
-  void node::set_allowed_peers( const std::vector<node_id_t>& allowed_peers )
-  {
-    INVOKE_IN_IMPL(set_allowed_peers, allowed_peers);
-  }
-
   void node::clear_peer_database()
   {
     INVOKE_IN_IMPL(clear_peer_database);
@@ -5182,14 +5052,19 @@ namespace graphene { namespace net { namespace detail {
     INVOKE_IN_IMPL(set_total_bandwidth_limit, upload_bytes_per_second, download_bytes_per_second);
   }
 
-  void node::disable_peer_advertising()
-  {
-    INVOKE_IN_IMPL(disable_peer_advertising);
-  }
-
   fc::variant_object node::get_call_statistics() const
   {
     INVOKE_IN_IMPL(get_call_statistics);
+  }
+
+  node_parameters node::get_parameters() const
+  {
+    INVOKE_IN_IMPL(get_parameters);
+  }
+
+  void node::set_parameters( const node_parameters& params )
+  {
+    INVOKE_IN_IMPL(set_parameters, params);
   }
 
   fc::variant_object node::network_get_info() const

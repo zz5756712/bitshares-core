@@ -17,6 +17,10 @@
 
 #include <graphene/chain/protocol/types.hpp>
 
+#include <boost/container/flat_set.hpp>
+
+#include <fc/optional.hpp>
+
 #include <list>
 
 namespace graphene { namespace net {
@@ -41,6 +45,54 @@ namespace graphene { namespace net {
     fc::time_point validated_time;
     node_id_t originating_peer;
   };
+
+   struct node_parameters
+   {
+      /** retry connections to peers that have failed or rejected us this often, in seconds */
+      uint32_t peer_connection_retry_timeout = GRAPHENE_NET_DEFAULT_PEER_CONNECTION_RETRY_TIME;
+
+      /** if we have less than `desired_number_of_connections`, we will try to connect with more nodes */
+      uint32_t desired_number_of_connections = GRAPHENE_NET_DEFAULT_DESIRED_CONNECTIONS;
+
+      /** if we have _maximum_number_of_connections or more, we will refuse any inbound connections */
+      uint32_t maximum_number_of_connections = GRAPHENE_NET_DEFAULT_MAX_CONNECTIONS;
+
+      /** how many seconds of inactivity are permitted before disconnecting a peer */
+      uint32_t peer_inactivity_timeout = GRAPHENE_NET_PEER_HANDSHAKE_INACTIVITY_TIMEOUT;
+
+      uint32_t maximum_number_of_blocks_to_handle_at_one_time = GRAPHENE_NET_MAXIMUM_NUMBER_OF_BLOCKS_TO_HANDLE_AT_ONE_TIME;
+      uint32_t maximum_number_of_sync_blocks_to_prefetch = GRAPHENE_NET_MAXIMUM_NUMBER_OF_BLOCKS_TO_PREFETCH;
+      uint32_t maximum_blocks_per_peer_during_syncing = GRAPHENE_NET_MAX_BLOCKS_PER_PEER_DURING_SYNCING;
+
+      bool peer_advertising_disabled = false;
+
+      boost::container::flat_set<node_id_t> allowed_peers;
+   };
+
+   /**
+    * node_configuration consists of user-configurable node data.
+    *
+    * node_parameters are configurable at runtime, node_configuration
+    * is fixed at startup.
+    */
+
+   struct node_configuration
+   {
+      node_configuration();
+      node_configuration( const fc::path& _directory );
+
+      fc::path directory;
+      /**
+       * If not specified, a new private key will be saved in
+       * directory / "node.key", and loaded on subsequent runs.
+       */
+      fc::optional< fc::ecc::private_key > node_private_key;
+      fc::ip::endpoint listen_endpoint;
+      bool accept_incoming_connections = true;
+      bool wait_if_endpoint_is_busy = true;
+
+      node_parameters parameters;
+   };
 
    /**
     *  @class node_delegate
@@ -183,14 +235,12 @@ namespace graphene { namespace net {
    class node : public std::enable_shared_from_this<node>
    {
       public:
-        node(const std::string& user_agent);
+        node( const std::string& user_agent, const node_configuration& cfg );
         ~node();
 
         void close();
 
         void      set_node_delegate( node_delegate* del );
-
-        void      load_configuration( const fc::path& configuration_directory );
 
         virtual void      listen_to_p2p_network();
         virtual void      connect_to_p2p_network();
@@ -206,27 +256,6 @@ namespace graphene { namespace net {
          *  Attempt to connect to the specified endpoint immediately.
          */
         virtual void connect_to_endpoint( const fc::ip::endpoint& ep );
-
-        /**
-         *  Specifies the network interface and port upon which incoming
-         *  connections should be accepted.
-         */
-        void      listen_on_endpoint( const fc::ip::endpoint& ep, bool wait_if_not_available );
-
-        /**
-         *  Call with true to enable listening for incoming connections
-         */
-        void accept_incoming_connections(bool accept);
-
-        /**
-         *  Specifies the port upon which incoming connections should be accepted.
-         *  @param port the port to listen on
-         *  @param wait_if_not_available if true and the port is not available, enter a
-         *                               sleep and retry loop to wait for it to become
-         *                               available.  If false and the port is not available,
-         *                               just choose a random available port
-         */
-        void      listen_on_port(uint16_t port, bool wait_if_not_available);
 
         /**
          * Returns the endpoint the node is listening on.  This is usually the same
@@ -261,8 +290,6 @@ namespace graphene { namespace net {
 
         bool      is_connected() const;
 
-        void set_advanced_node_parameters(const fc::variant_object& params);
-        fc::variant_object get_advanced_node_parameters();
         message_propagation_data get_transaction_propagation_data(const graphene::chain::transaction_id_type& transaction_id);
         message_propagation_data get_block_propagation_data(const graphene::chain::block_id_type& block_id);
         node_id_t get_node_id() const;
@@ -276,12 +303,14 @@ namespace graphene { namespace net {
 
         void set_total_bandwidth_limit(uint32_t upload_bytes_per_second, uint32_t download_bytes_per_second);
 
+        node_parameters get_parameters() const;
+        void set_parameters( const node_parameters& params );
+
         fc::variant_object network_get_info() const;
         fc::variant_object network_get_usage_stats() const;
 
         std::vector<potential_peer_record> get_potential_peers() const;
 
-        void disable_peer_advertising();
         fc::variant_object get_call_statistics() const;
       private:
         std::unique_ptr<detail::node_impl, detail::node_impl_deleter> my;
@@ -291,7 +320,7 @@ namespace graphene { namespace net {
     {
     public:
       ~simulated_network();
-      simulated_network(const std::string& user_agent) : node(user_agent) {}
+      simulated_network(const std::string& user_agent, const node_configuration& cfg) : node(user_agent, cfg) {}
       void      listen_to_p2p_network() override {}
       void      connect_to_p2p_network() override {}
       void      connect_to_endpoint(const fc::ip::endpoint& ep) override {}
@@ -317,3 +346,24 @@ namespace graphene { namespace net {
 
 FC_REFLECT(graphene::net::message_propagation_data, (received_time)(validated_time)(originating_peer));
 FC_REFLECT( graphene::net::peer_status, (version)(host)(info) );
+
+FC_REFLECT(graphene::net::node_parameters,
+    (peer_connection_retry_timeout)
+    (desired_number_of_connections)
+    (maximum_number_of_connections)
+    (peer_inactivity_timeout)
+    (maximum_number_of_blocks_to_handle_at_one_time)
+    (maximum_number_of_sync_blocks_to_prefetch)
+    (maximum_blocks_per_peer_during_syncing)
+    (peer_advertising_disabled)
+    (allowed_peers)
+   );
+
+FC_REFLECT(graphene::net::node_configuration,
+    (directory)
+    (node_private_key)
+    (listen_endpoint)
+    (accept_incoming_connections)
+    (wait_if_endpoint_is_busy)
+    (parameters)
+   );

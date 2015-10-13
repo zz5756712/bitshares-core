@@ -22,6 +22,7 @@
 
 #include <graphene/net/core_messages.hpp>
 #include <graphene/net/exceptions.hpp>
+#include <graphene/net/node.hpp>
 
 #include <graphene/time/time.hpp>
 
@@ -51,6 +52,7 @@ namespace graphene { namespace app {
 using net::item_hash_t;
 using net::item_id;
 using net::message;
+using net::node_configuration;
 using net::block_message;
 using net::trx_message;
 
@@ -103,9 +105,8 @@ namespace detail {
 
       void reset_p2p_node(const fc::path& data_dir)
       { try {
-         _p2p_network = std::make_shared<net::node>("BitShares Reference Implementation");
+         _p2p_network = std::make_shared<net::node>("BitShares Reference Implementation", _p2p_config);
 
-         _p2p_network->load_configuration(data_dir / "p2p");
          _p2p_network->set_node_delegate(this);
 
          if( _options->count("seed-node") )
@@ -166,10 +167,6 @@ namespace detail {
             }
          }
 
-         if( _options->count("p2p-endpoint") )
-            _p2p_network->listen_on_endpoint(fc::ip::endpoint::from_string(_options->at("p2p-endpoint").as<string>()), true);
-         else
-            _p2p_network->listen_on_port(0, false);
          _p2p_network->listen_to_p2p_network();
          ilog("Configured p2p node to listen on ${ip}", ("ip", _p2p_network->get_actual_listening_endpoint()));
 
@@ -271,6 +268,35 @@ namespace detail {
          for( uint64_t i=0; i<genesis.initial_active_witnesses; i++ )
             genesis.initial_witness_candidates[i].block_signing_key = init_pubkey;
          return;
+      }
+
+      static void parse_p2p_config( node_configuration& cfg, const bpo::variables_map* options )
+      {
+         if( options == nullptr )
+            return;
+         if( options->count("p2p-peer-connection-retry-timeout") )
+            cfg.parameters.peer_connection_retry_timeout = options->at("p2p-peer-connection-retry-timeout").as<uint32_t>();
+         if( options->count("p2p-desired-number-of-connections") )
+            cfg.parameters.desired_number_of_connections = options->at("p2p-desired-number-of-connections").as<uint32_t>();
+         if( options->count("p2p-maximum-number-of-connections") )
+            cfg.parameters.maximum_number_of_connections = options->at("p2p-maximum-number-of-connections").as<uint32_t>();
+         if( options->count("p2p-peer-inactivity-timeout") )
+            cfg.parameters.peer_inactivity_timeout = options->at("p2p-peer-inactivity-timeout").as<uint32_t>();
+         if( options->count("p2p-maximum-number-of-blocks-to-handle-at-one-time") )
+            cfg.parameters.maximum_number_of_blocks_to_handle_at_one_time = options->at("p2p-maximum-number-of-blocks-to-handle-at-one-time").as<uint32_t>();
+         if( options->count("p2p-maximum-number-of-sync-blocks-to-prefetch") )
+            cfg.parameters.maximum_number_of_sync_blocks_to_prefetch = options->at("p2p-maximum-number-of-sync-blocks-to-prefetch").as<uint32_t>();
+         if( options->count("p2p-maximum-blocks-per-peer-during-syncing") )
+            cfg.parameters.maximum_blocks_per_peer_during_syncing = options->at("p2p-maximum-blocks-per-peer-during-syncing").as<uint32_t>();
+         if( options->count("p2p-peer-advertising-disabled") )
+            cfg.parameters.peer_advertising_disabled = options->at("p2p-peer-advertising-disabled").as<bool>();
+
+         if( options->count("p2p-accept-incoming-connections") )
+            cfg.accept_incoming_connections = options->at("p2p-accept-incoming-connections").as<bool>();
+         if( options->count("p2p-wait-if-endpoint-is-busy") )
+            cfg.wait_if_endpoint_is_busy = options->at("p2p-wait-if-endpoint-is-busy").as<bool>();
+         if( options->count("p2p-endpoint") )
+            cfg.listen_endpoint = fc::ip::endpoint::from_string(options->at("p2p-endpoint").as<string>());
       }
 
       void startup()
@@ -384,6 +410,8 @@ namespace detail {
             wild_access.allowed_apis.push_back( "history_api" );
             _apiaccess.permission_map["*"] = wild_access;
          }
+
+         parse_p2p_config( _p2p_config, _options );
 
          reset_p2p_node(_data_dir);
          reset_websocket_server();
@@ -836,6 +864,7 @@ namespace detail {
 
       fc::path _data_dir;
       const bpo::variables_map* _options = nullptr;
+      node_configuration _p2p_config;
       api_access _apiaccess;
 
       std::shared_ptr<graphene::chain::database>            _chain_db;
@@ -882,7 +911,30 @@ void application::set_program_options(boost::program_options::options_descriptio
          ("genesis-json", bpo::value<boost::filesystem::path>(), "File to read Genesis State from")
          ("dbg-init-key", bpo::value<string>(), "Block signing key to use for init witnesses, overrides genesis file")
          ("api-access", bpo::value<boost::filesystem::path>(), "JSON file specifying API permissions")
+         ("p2p-peer-connection-retry-timeout", bpo::value<uint32_t>()->implicit_value(GRAPHENE_NET_DEFAULT_PEER_CONNECTION_RETRY_TIME),
+          "Retry connections to peers that have failed or rejected us this often, in seconds")
+         ("p2p-desired-number-of-connections", bpo::value<uint32_t>()->implicit_value(GRAPHENE_NET_DEFAULT_DESIRED_CONNECTIONS),
+          "Try to connect to more nodes when we have fewer than this many connections")
+         ("p2p-maximum-number-of-connections", bpo::value<uint32_t>()->implicit_value(GRAPHENE_NET_DEFAULT_MAX_CONNECTIONS),
+          "Refuse inbound connections when we have this many connections or more")
+         ("p2p-peer-inactivity-timeout", bpo::value<uint32_t>()->implicit_value(GRAPHENE_NET_PEER_HANDSHAKE_INACTIVITY_TIMEOUT),
+          "How many seconds of inactivity are permitted before disconnecting a peer")
+         ("p2p-maximum-number-of-blocks-to-handle-at-one-time", bpo::value<uint32_t>()->implicit_value(GRAPHENE_NET_MAXIMUM_NUMBER_OF_BLOCKS_TO_HANDLE_AT_ONE_TIME),
+          "TODO: describe this")
+         ("p2p-maximum-number-of-sync-blocks-to-prefetch", bpo::value<uint32_t>()->implicit_value(GRAPHENE_NET_MAXIMUM_NUMBER_OF_BLOCKS_TO_PREFETCH),
+          "TODO: describe this")
+         ("p2p-maximum-blocks-per-peer-during-syncing", bpo::value<uint32_t>()->implicit_value(GRAPHENE_NET_MAX_BLOCKS_PER_PEER_DURING_SYNCING),
+          "TODO: describe this")
+         ("p2p-peer-advertising-disabled", bpo::value<bool>()->implicit_value(false),
+          "Disable peer advertising")
+         ("p2p-node-private-key", bpo::value<string>(),
+          "Private key for p2p (will generate/use node.key if not specified)")
+         ("p2p-accept-incoming-connections", bpo::value<bool>()->implicit_value(true),
+          "Accept incoming connections")
+         ("p2p-wait-if-endpoint-is-busy", bpo::value<bool>()->implicit_value(true),
+          "If false, rebind to a random port if binding to p2p-endpoint fails")
          ;
+
    command_line_options.add(configuration_file_options);
    command_line_options.add_options()
          ("create-genesis-json", bpo::value<boost::filesystem::path>(),
