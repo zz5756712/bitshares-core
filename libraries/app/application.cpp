@@ -548,6 +548,7 @@ bool application_impl::handle_block(const graphene::net::block_message& blk_msg,
       _is_finished_syncing = true;
       _self->syncing_finished();
    }
+   return false;
 } FC_CAPTURE_AND_RETHROW( (blk_msg)(sync_mode) ) return false; }
 
 void application_impl::handle_transaction(const graphene::net::trx_message& transaction_message)
@@ -1084,6 +1085,8 @@ void graphene::app::application::add_available_plugin(std::shared_ptr<graphene::
 
 void application::shutdown_plugins()
 {
+   my->_p2p_network->close();
+   my->_p2p_network.reset();
    for( auto& entry : my->_active_plugins )
       entry.second->plugin_shutdown();
    return;
