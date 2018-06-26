@@ -24,6 +24,7 @@
 #include <graphene/chain/database.hpp>
 #include <graphene/chain/proposal_evaluator.hpp>
 #include <graphene/chain/proposal_object.hpp>
+#include <graphene/chain/protocol/fee_schedule.hpp>
 #include <graphene/chain/hardfork.hpp>
 
 #include <fc/smart_ref_impl.hpp>
@@ -44,6 +45,17 @@ struct proposal_operation_hardfork_visitor
    void operator()(const T &v) const {}
 
    // TODO review and cleanup code below after hard fork
+   // fee schedule
+   void operator()(const graphene::chain::committee_member_update_global_parameters_operation &v) const {
+      if( next_maintenance_time <= HARDFORK_CORE_188_TIME
+            && v.new_parameters.current_fees->parameters.size() > 0 )
+      {
+         const auto& which = v.new_parameters.current_fees->parameters.rbegin()->which();
+         FC_ASSERT( which < fee_parameters::tag< asset_claim_pool_operation::fee_parameters_type >::value,
+                    "Unable to propose fee schedule change for operation (${op}) before hardfork",
+                    ("op",which) );
+      }
+   }
    // hf_834
    void operator()(const graphene::chain::call_order_update_operation &v) const {
       if (next_maintenance_time <= HARDFORK_CORE_834_TIME) {
