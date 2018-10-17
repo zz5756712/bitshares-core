@@ -98,7 +98,9 @@ namespace graphene { namespace chain {
          bool allow_confidential()const { return !(options.flags & asset_issuer_permission_flags::disable_confidential); }
          /// @return true if this asset can modify the max supply
          bool can_modify_max_supply() const { return !(options.flags & asset_issuer_permission_flags::disable_modify_max_supply); }
-         
+         /// @return true if this asset can be issued
+         bool can_issue() const { return !(options.flags & asset_issuer_permission_flags::disable_issue); }
+
          /// Helper function to get an asset object with the given amount in this asset's type
          asset amount(share_type a)const { return asset(a, id); }
          /// Convert a string amount (i.e. "123.45") to an asset object with this asset's type

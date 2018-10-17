@@ -2367,11 +2367,10 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
    transfer( committee_acc, alice_id, asset(100000000) );
    
    signed_transaction trx;
-   string SYMBOL = "TEST";
-   asset_object test_asset;
-   asset_id_type test_asset_id;
+   asset_object       test1_asset;
+   asset_id_type      test1_asset_id;
 
-   edump( ("Creating an asset disable_modify_max_supply_flag == 0") );
+   edump( ("Creating an asset: disable_modify_max_supply_flag == 0") );
    {
       asset_options a_opt; 
       a_opt.max_supply         = 1000;
@@ -2379,7 +2378,7 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
 
       asset_create_operation acop;
       acop.issuer         = alice_id;
-      acop.symbol         = SYMBOL;
+      acop.symbol         = "TEST";
       acop.common_options = a_opt;
 
       set_expiration(db, trx);
@@ -2390,25 +2389,25 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
       const auto& idx = db.get_index_type<asset_index>();
          idx.inspect_all_objects( [&](const object& obj){
             const asset_object& ao = static_cast<const asset_object&>(obj);
-            if(ao.symbol == SYMBOL){
-               test_asset    = ao;
-               test_asset_id = ao.id;
+            if(ao.symbol == "TEST"){
+               test1_asset    = ao;
+               test1_asset_id = ao.id;
             }
       } );
 
-      BOOST_CHECK( test_asset.can_modify_max_supply() );
+      BOOST_CHECK( test1_asset.can_modify_max_supply() );
    }
 
-   edump( ( "Modifying the maximum supply. disable_modify_max_supply flag == 0" ) );
+   edump( ( "Modifying the maximum supply: disable_modify_max_supply flag == 0" ) );
    {
       asset_options a_opt;
       a_opt.max_supply         = 2000;
-      a_opt.core_exchange_rate = price( asset(4, asset_id_type(2) ), asset(4, asset_id_type(0) ) );
+      a_opt.core_exchange_rate = test1_asset.options.core_exchange_rate;
 
       asset_update_operation auop;
       auop.fee             = asset(0);
       auop.issuer          = alice_id;
-      auop.asset_to_update = test_asset_id;
+      auop.asset_to_update = test1_asset_id;
       auop.new_options     = a_opt;
 
       trx = signed_transaction();
@@ -2416,21 +2415,21 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
       trx.operations.push_back( auop );
       PUSH_TX( db, trx, ~0 );
 
-      test_asset = db.get(test_asset_id);
-      BOOST_CHECK( test_asset.options.max_supply == 2000 );
+      test1_asset = db.get(test1_asset_id);
+      BOOST_CHECK( test1_asset.options.max_supply == 2000 );
    }
 
-   edump( ( "Setting disable_modify_max_supply_flag. disable_modify_max_supply flag == 0x200" ) );
+   edump( ( "Setting disable_modify_max_supply_flag: disable_modify_max_supply flag == 0x200" ) );
    {
       asset_options a_opt;
       a_opt.max_supply         = 2000;
-      a_opt.core_exchange_rate = price( asset(4, asset_id_type(2) ), asset(4, asset_id_type(0) ) );
-      a_opt.flags              = asset_issuer_permission_flags::disable_modify_max_supply;
+      a_opt.core_exchange_rate = test1_asset.options.core_exchange_rate;
+      a_opt.flags              = disable_modify_max_supply;
 
       asset_update_operation auop;
       auop.fee             = asset(0);
       auop.issuer          = alice_id;
-      auop.asset_to_update = test_asset_id;
+      auop.asset_to_update = test1_asset_id;
       auop.new_options     = a_opt;
 
       trx = signed_transaction();
@@ -2438,50 +2437,156 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
       trx.operations.push_back( auop );
       PUSH_TX( db, trx, ~0 );
 
-      test_asset = db.get(test_asset_id);
-      BOOST_CHECK( ( test_asset.options.flags)// & asset_issuer_permission_flags::disable_modify_max_supply )
-         == asset_issuer_permission_flags::disable_modify_max_supply );
-      BOOST_CHECK( !test_asset.can_modify_max_supply() );
+      test1_asset = db.get(test1_asset_id);
+      
+      BOOST_CHECK( test1_asset.options.flags == disable_modify_max_supply );
+      BOOST_CHECK( !test1_asset.can_modify_max_supply() );
    }
 
    edump( ( "Trying to disable the disable_modify_max_supply_flag.") );
    {
       asset_options a_opt;
       a_opt.max_supply         = 2000;
-      a_opt.core_exchange_rate = price( asset(4, asset_id_type(2) ), asset(4, asset_id_type(0) ) );
+      a_opt.core_exchange_rate = test1_asset.options.core_exchange_rate;
       a_opt.flags              = 0;
 
       asset_update_operation auop;
       auop.fee             = asset(0);
       auop.issuer          = alice_id;
-      auop.asset_to_update = test_asset.get_id();
+      auop.asset_to_update = test1_asset.get_id();
       auop.new_options     = a_opt;
 
       trx = signed_transaction();
       set_expiration(db, trx);
       trx.operations.push_back( auop );
       
-      GRAPHENE_REQUIRE_THROW( PUSH_TX( db, trx, ~0 ), fc::exception );
+      GRAPHENE_REQUIRE_THROW( PUSH_TX( db, trx, ~0 ), fc::assert_exception );
    }
 
    edump( ( "Trying to change the maximum supply." ) );
    {
       asset_options a_opt;
       a_opt.max_supply         = 1000;
-      a_opt.core_exchange_rate = price( asset(4, asset_id_type(2) ), asset(4, asset_id_type(0) ) );
-      a_opt.flags              = asset_issuer_permission_flags::disable_modify_max_supply;
+      a_opt.core_exchange_rate = test1_asset.options.core_exchange_rate;
+      a_opt.flags              = disable_modify_max_supply;
 
       asset_update_operation auop;
       auop.fee             = asset(0);
       auop.issuer          = alice_id;
-      auop.asset_to_update = test_asset.get_id();
+      auop.asset_to_update = test1_asset.get_id();
       auop.new_options     = a_opt;
 
       trx = signed_transaction();
       set_expiration(db, trx);
       trx.operations.push_back( auop );
       
-      GRAPHENE_REQUIRE_THROW( PUSH_TX( db, trx, ~0 ), fc::exception );
+      GRAPHENE_REQUIRE_THROW( PUSH_TX( db, trx, ~0 ), fc::assert_exception );
+   }
+
+   edump( ( "Issue half of the maximum supply of the test asset." ) );
+   {
+      test1_asset = db.get(test1_asset_id);
+      asset_issue_operation aiop;
+      aiop.fee              = asset(0);
+      aiop.issuer           = alice_id;
+      aiop.asset_to_issue   = asset( test1_asset.options.max_supply / 2, test1_asset.get_id() );
+      aiop.issue_to_account = alice_id;
+
+      trx = signed_transaction();
+      set_expiration(db, trx);
+      trx.operations.push_back( aiop );
+      PUSH_TX( db, trx, ~0 );
+
+      test1_asset = db.get(test1_asset_id);
+      BOOST_CHECK( get_balance(alice, test1_asset) == test1_asset.options.max_supply / 2 );
+      BOOST_CHECK( test1_asset.dynamic_asset_data_id(db).current_supply != 0 );
+   }
+
+   edump( ( "Set the disable_issue flag and try to issue the asset.") );
+   {
+      generate_blocks( HARDFORK_572_TIME + fc::seconds(20) );
+      generate_block();
+      BOOST_CHECK( ( db.head_block_time() < HARDFORK_572_TIME ) || (test1_asset.dynamic_asset_data_id(db).current_supply != 0 ) );
+
+      test1_asset = db.get(test1_asset_id);
+      asset_options a_opt;
+      a_opt.max_supply         = test1_asset.options.max_supply;
+      a_opt.core_exchange_rate = test1_asset.options.core_exchange_rate;
+      a_opt.flags              = disable_modify_max_supply | disable_issue;
+
+      asset_update_operation auop;
+      auop.fee             = asset(0);
+      auop.issuer          = alice_id;
+      auop.asset_to_update = test1_asset.get_id();
+      auop.new_options     = a_opt;
+
+      trx = signed_transaction();
+      set_expiration(db, trx);
+      trx.operations.push_back( auop );
+      try {
+         PUSH_TX( db, trx, ~0 );
+      } catch (fc::assert_exception &e) {
+         edump( (e.to_detail_string()) );
+      }
+
+      asset_issue_operation aiop;
+      aiop.fee              = asset(0);
+      aiop.issuer           = alice_id;
+      aiop.asset_to_issue   = asset( test1_asset.options.max_supply / 2, test1_asset.get_id() );
+      aiop.issue_to_account = alice_id;
+
+      trx = signed_transaction();
+      set_expiration(db, trx);
+      trx.operations.push_back( aiop );
+      GRAPHENE_REQUIRE_THROW( PUSH_TX( db, trx, ~0 ), fc::assert_exception );
+   }
+
+   edump( ( "Test asset_create_operation with flags.") );
+   {
+      signed_transaction trx;
+      asset_object       test2_asset;
+      asset_id_type      test2_asset_id;
+      
+      asset_options a_opt; 
+      a_opt.max_supply         = 1000;
+      a_opt.core_exchange_rate = price( asset( 4, asset_id_type(2) ), asset( 4, asset_id_type() ) );
+      a_opt.flags              = disable_modify_max_supply | disable_issue;
+
+      asset_create_operation acop;
+      acop.issuer         = alice_id;
+      acop.symbol         = "TST2";
+      acop.common_options = a_opt;
+      
+      set_expiration(db, trx);
+      trx.operations.push_back( acop );
+      PUSH_TX( db, trx, ~0 );
+
+      // getting asset_obj from db
+      const auto& idx = db.get_index_type<asset_index>();
+         idx.inspect_all_objects( [&](const object& obj){
+            const asset_object& ao = static_cast<const asset_object&>(obj);
+            if(ao.symbol == "TST2"){
+               test2_asset    = ao;
+               test2_asset_id = ao.id;
+            }
+      } );
+
+      BOOST_CHECK( !test2_asset.can_modify_max_supply() );
+      BOOST_CHECK( !test2_asset.can_issue() );
+      // on creation the permissions should normally be removed
+      BOOST_CHECK( !(test2_asset.options.issuer_permissions & disable_modify_max_supply) );
+      BOOST_CHECK( !(test2_asset.options.issuer_permissions & disable_issue) );
+
+      asset_issue_operation aiop;
+      aiop.fee              = asset(0);
+      aiop.issuer           = alice_id;
+      aiop.asset_to_issue   = asset( test2_asset.options.max_supply / 2, test2_asset.get_id() );
+      aiop.issue_to_account = alice_id;
+
+      trx = signed_transaction();
+      set_expiration(db, trx);
+      trx.operations.push_back( aiop );
+      GRAPHENE_REQUIRE_THROW( PUSH_TX( db, trx, ~0 ), fc::assert_exception );
    }
 } 
 // TODO:  Write linear VBO tests

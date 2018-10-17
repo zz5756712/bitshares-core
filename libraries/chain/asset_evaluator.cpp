@@ -149,6 +149,12 @@ object_id_type asset_create_evaluator::do_apply( const asset_create_operation& o
          a.symbol = op.symbol;
          a.precision = op.precision;
          a.options = op.common_options;
+         // check if the disable_modify_max_supply flag was set, if so remove the permission to modify it
+         if( a.options.flags & disable_modify_max_supply )
+            a.options.issuer_permissions -= disable_modify_max_supply;
+         // check if the disable_issue flag was set, if so remove the permission to modify it
+         if( a.options.flags & disable_issue )
+            a.options.issuer_permissions -= disable_issue;
          if( a.options.core_exchange_rate.base.asset_id.instance.value == 0 )
             a.options.core_exchange_rate.quote.asset_id = next_asset_id;
          else
@@ -157,6 +163,9 @@ object_id_type asset_create_evaluator::do_apply( const asset_create_operation& o
          if( op.bitasset_opts.valid() )
             a.bitasset_data_id = bit_asset_id;
       });
+   
+   
+   
    FC_ASSERT( new_asset.id == next_asset_id, "Unexpected object database error, object id mismatch" );
 
    return new_asset.id;
@@ -167,6 +176,7 @@ void_result asset_issue_evaluator::do_evaluate( const asset_issue_operation& o )
    const database& d = db();
 
    const asset_object& a = o.asset_to_issue.asset_id(d);
+   FC_ASSERT( !(a.options.flags & disable_issue), "This operation is permitted by user permissions." );
    FC_ASSERT( o.issuer == a.issuer );
    FC_ASSERT( !a.is_market_issued(), "Cannot manually issue a market-issued asset." );
 
@@ -186,7 +196,7 @@ void_result asset_issue_evaluator::do_apply( const asset_issue_operation& o )
    db().modify( *asset_dyn_data, [&o]( asset_dynamic_data_object& data ){
         data.current_supply += o.asset_to_issue.amount;
    });
-
+   
    return void_result();
 } FC_CAPTURE_AND_RETHROW( (o) ) }
 
@@ -290,15 +300,9 @@ void_result asset_update_evaluator::do_evaluate(const asset_update_operation& o)
              "Flag change is forbidden by issuer permissions");
 
    // TODO HARDFORKCHECK
-   // change of the disable_modify_max_supply flag; should only be set from 0 to 1
-   FC_ASSERT( ( old_options.flags & disable_modify_max_supply == o.new_options.flags & disable_modify_max_supply 
-           || ( old_options.flags & disable_modify_max_supply ) == 0 ),
-           "The disable_modify_max_supply flag can not be deactivated." );
-
-   // TODO HARDFORKCHECK
-   // maximum supply can only be changed if the disable_modify_max_supply flag is 0
+   // maximum supply can only be changed if the disable_modify_max_supply flag is turned off (0)
    FC_ASSERT( ( old_options.max_supply == o.new_options.max_supply 
-           || ( old_options.flags & disable_modify_max_supply ) == 0 ),
+           || !( old_options.flags & disable_modify_max_supply ) ),
            "Modification of the maximum supply is forbidden by permission flag." );
    
 
@@ -352,7 +356,19 @@ void_result asset_update_evaluator::do_apply(const asset_update_operation& o)
    d.modify(*asset_to_update, [&o](asset_object& a) {
       if( o.new_issuer )
          a.issuer = *o.new_issuer;
-      a.options = o.new_options;
+
+      asset_options new_options = o.new_options;
+      
+      // check if the disable_modify_max_supply flag was set, if so remove the permission to modify it
+      if( ( ( a.options.flags & disable_modify_max_supply ) == 0 ) // old/current flag state: disable_modify_max_supply == off
+       && ( ( new_options.flags & disable_modify_max_supply ) == disable_modify_max_supply ) ) // new flag state: disable_modify_max_supply == on
+         new_options.issuer_permissions -= disable_modify_max_supply;
+      
+      if( ( ( a.options.flags & disable_issue ) == 0 ) 
+       && ( ( new_options.flags & disable_issue ) == disable_issue ) )
+         new_options.issuer_permissions -= disable_issue;
+      
+      a.options = new_options;
    });
 
    return void_result();
