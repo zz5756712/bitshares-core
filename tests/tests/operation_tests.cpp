@@ -2370,6 +2370,9 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
    asset_object       test1_asset;
    asset_id_type      test1_asset_id;
 
+   generate_blocks( HARDFORK_572_TIME + fc::seconds(20) );
+   generate_block();
+
    edump( ("Creating an asset: disable_modify_max_supply_flag == 0") );
    {
       asset_options a_opt; 
@@ -2479,8 +2482,10 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
       trx = signed_transaction();
       set_expiration(db, trx);
       trx.operations.push_back( auop );
+      PUSH_TX( db, trx, ~0 );
       
-      GRAPHENE_REQUIRE_THROW( PUSH_TX( db, trx, ~0 ), fc::assert_exception );
+      test1_asset = db.get(test1_asset_id);
+      BOOST_CHECK( test1_asset.options.max_supply == 1000 );
    }
 
    edump( ( "Issue half of the maximum supply of the test asset." ) );
@@ -2498,16 +2503,33 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
       PUSH_TX( db, trx, ~0 );
 
       test1_asset = db.get(test1_asset_id);
-      BOOST_CHECK( get_balance(alice, test1_asset) == test1_asset.options.max_supply / 2 );
+      account_object alice_obj = db.get(alice_id);
+      BOOST_CHECK( get_balance(alice_obj, test1_asset) == test1_asset.options.max_supply / 2 );
       BOOST_CHECK( test1_asset.dynamic_asset_data_id(db).current_supply != 0 );
+   }
+
+   edump( ( "Try to change the max_supply after asset was issued.") )
+   {
+      asset_options a_opt;
+      a_opt.max_supply         = 2000;
+      a_opt.core_exchange_rate = test1_asset.options.core_exchange_rate;
+      a_opt.flags              = disable_modify_max_supply;
+
+      asset_update_operation auop;
+      auop.fee             = asset(0);
+      auop.issuer          = alice_id;
+      auop.asset_to_update = test1_asset.get_id();
+      auop.new_options     = a_opt;
+
+      trx = signed_transaction();
+      set_expiration(db, trx);
+      trx.operations.push_back( auop );
+      
+      GRAPHENE_REQUIRE_THROW( PUSH_TX( db, trx, ~0 ), fc::assert_exception );
    }
 
    edump( ( "Set the disable_issue flag and try to issue the asset.") );
    {
-      generate_blocks( HARDFORK_572_TIME + fc::seconds(20) );
-      generate_block();
-      BOOST_CHECK( ( db.head_block_time() < HARDFORK_572_TIME ) || (test1_asset.dynamic_asset_data_id(db).current_supply != 0 ) );
-
       test1_asset = db.get(test1_asset_id);
       asset_options a_opt;
       a_opt.max_supply         = test1_asset.options.max_supply;
@@ -2549,23 +2571,28 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
       
       asset_options a_opt; 
       a_opt.max_supply         = 1000;
-      a_opt.core_exchange_rate = price( asset( 4, asset_id_type(2) ), asset( 4, asset_id_type() ) );
+      a_opt.core_exchange_rate = price( asset( 4, asset_id_type(1) ), asset( 4, asset_id_type() ) );
       a_opt.flags              = disable_modify_max_supply | disable_issue;
 
       asset_create_operation acop;
       acop.issuer         = alice_id;
-      acop.symbol         = "TST2";
+      acop.symbol         = "TSTT";
       acop.common_options = a_opt;
       
       set_expiration(db, trx);
       trx.operations.push_back( acop );
+      try{
       PUSH_TX( db, trx, ~0 );
-
+      }
+      catch(fc::assert_exception &e)
+      {
+         edump((e.to_detail_string()));
+      }
       // getting asset_obj from db
       const auto& idx = db.get_index_type<asset_index>();
          idx.inspect_all_objects( [&](const object& obj){
             const asset_object& ao = static_cast<const asset_object&>(obj);
-            if(ao.symbol == "TST2"){
+            if(ao.symbol == "TSTT"){
                test2_asset    = ao;
                test2_asset_id = ao.id;
             }

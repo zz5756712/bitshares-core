@@ -300,8 +300,9 @@ void_result asset_update_evaluator::do_evaluate(const asset_update_operation& o)
              "Flag change is forbidden by issuer permissions");
 
    // TODO HARDFORKCHECK
-   // maximum supply can only be changed if the disable_modify_max_supply flag is turned off (0)
-   FC_ASSERT( ( old_options.max_supply == o.new_options.max_supply 
+   // maximum supply can only be changed if the disable_modify_max_supply flag is turned off (0) or the current_supply == 0
+   FC_ASSERT( ( old_options.max_supply == o.new_options.max_supply
+           || ( a.dynamic_asset_data_id(d).current_supply == 0 ) 
            || !( old_options.flags & disable_modify_max_supply ) ),
            "Modification of the maximum supply is forbidden by permission flag." );
    
