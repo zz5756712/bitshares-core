@@ -101,11 +101,13 @@ namespace graphene { namespace chain {
       disable_confidential = 0x40, /**< allow the asset to be used with confidential transactions */
       witness_fed_asset    = 0x80, /**< allow the asset to be fed by witnesses */
       committee_fed_asset  = 0x100,/**< allow the asset to be fed by the committee */
-      disable_modify_max_supply = 0x200 /**< disable the modification of the maximum supply; can only be activated once */
+      disable_modify_max_supply = 0x200, /**< disable the modification of the maximum supply; can only be activated once */
+      disable_issue        = 0x400 /**< disable the asset_issue_operation when the current_supply == max_supply & disable_modify_max_supply flag is set */
    };
    const static uint32_t ASSET_ISSUER_PERMISSION_MASK = charge_market_fee|white_list|override_authority|transfer_restricted|disable_force_settle|global_settle|disable_confidential
-      |witness_fed_asset|committee_fed_asset|disable_modify_max_supply;
-   const static uint32_t UIA_ASSET_ISSUER_PERMISSION_MASK = charge_market_fee|white_list|override_authority|transfer_restricted|disable_confidential|disable_modify_max_supply;
+      |witness_fed_asset|committee_fed_asset|disable_modify_max_supply|disable_issue;
+   const static uint32_t UIA_ASSET_ISSUER_PERMISSION_MASK = charge_market_fee|white_list|override_authority|transfer_restricted|disable_confidential|disable_modify_max_supply
+      |disable_issue;
 
    enum reserved_spaces
    {
@@ -410,4 +412,5 @@ FC_REFLECT_ENUM( graphene::chain::asset_issuer_permission_flags,
    (witness_fed_asset)
    (committee_fed_asset)
    (disable_modify_max_supply)
+   (disable_issue)
    )
