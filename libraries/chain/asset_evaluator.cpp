@@ -187,6 +187,7 @@ void_result asset_issue_evaluator::do_apply( const asset_issue_operation& o )
    db().modify( *asset_dyn_data, [&o]( asset_dynamic_data_object& data ){
         data.current_supply += o.asset_to_issue.amount;
    });
+   
    return void_result();
 } FC_CAPTURE_AND_RETHROW( (o) ) }
 
