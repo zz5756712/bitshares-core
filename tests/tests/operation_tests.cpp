@@ -2422,7 +2422,7 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
       BOOST_CHECK( test1_asset.options.max_supply == 2000 );
    }
 
-   edump( ( "Setting disable_modify_max_supply_flag: disable_modify_max_supply flag == 0x200" ) );
+   edump( ( "Setting disable_modify_max_supply_flag: disable_modify_max_supply flag = 0x200" ) );
    {
       asset_options a_opt;
       a_opt.max_supply         = 2000;
@@ -2446,7 +2446,7 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
       BOOST_CHECK( !test1_asset.can_modify_max_supply() );
    }
 
-   edump( ( "Trying to disable the disable_modify_max_supply_flag.") );
+   edump( ( "Trying to disable the disable_modify_max_supply_flag: disable_modify_max_supply flag = 0x200") );
    {
       asset_options a_opt;
       a_opt.max_supply         = 2000;
@@ -2466,7 +2466,8 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
       GRAPHENE_REQUIRE_THROW( PUSH_TX( db, trx, ~0 ), fc::assert_exception );
    }
 
-   edump( ( "Trying to change the maximum supply." ) );
+   edump( ( "Trying to change the maximum supply: disble_modify_max_supply flag = 0x200;
+   current_supply = 0 -> max_supply should still be modifiable." ) );
    {
       asset_options a_opt;
       a_opt.max_supply         = 1000;
@@ -2508,7 +2509,8 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
       BOOST_CHECK( test1_asset.dynamic_asset_data_id(db).current_supply != 0 );
    }
 
-   edump( ( "Try to change the max_supply after asset was issued.") )
+   edump( ( "Try to change the max_supply after asset was issued: disable_modify_max_supply flag = 0x200;
+   max_supply can't be modified.") )
    {
       asset_options a_opt;
       a_opt.max_supply         = 2000;
