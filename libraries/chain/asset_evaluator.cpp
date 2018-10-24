@@ -149,7 +149,6 @@ object_id_type asset_create_evaluator::do_apply( const asset_create_operation& o
          a.symbol = op.symbol;
          a.precision = op.precision;
          a.options = op.common_options;
-         
          if( a.options.core_exchange_rate.base.asset_id.instance.value == 0 )
             a.options.core_exchange_rate.quote.asset_id = next_asset_id;
          else
@@ -158,9 +157,6 @@ object_id_type asset_create_evaluator::do_apply( const asset_create_operation& o
          if( op.bitasset_opts.valid() )
             a.bitasset_data_id = bit_asset_id;
       });
-   
-   
-   
    FC_ASSERT( new_asset.id == next_asset_id, "Unexpected object database error, object id mismatch" );
 
    return new_asset.id;
@@ -191,7 +187,6 @@ void_result asset_issue_evaluator::do_apply( const asset_issue_operation& o )
    db().modify( *asset_dyn_data, [&o]( asset_dynamic_data_object& data ){
         data.current_supply += o.asset_to_issue.amount;
    });
-   
    return void_result();
 } FC_CAPTURE_AND_RETHROW( (o) ) }
 
@@ -271,7 +266,6 @@ void_result asset_update_evaluator::do_evaluate(const asset_update_operation& o)
    database& d = db();
 
    const asset_object& a = o.asset_to_update(d);
-   auto old_options = a.options;
    auto a_copy = a;
    a_copy.options = o.new_options;
    a_copy.validate();
@@ -296,9 +290,9 @@ void_result asset_update_evaluator::do_evaluate(const asset_update_operation& o)
 
    // TODO HARDFORKCHECK
    // maximum supply can only be changed if the disable_modify_max_supply flag is turned off (0) or the current_supply == 0
-   FC_ASSERT( ( old_options.max_supply == o.new_options.max_supply
+   FC_ASSERT( ( a.options.max_supply == o.new_options.max_supply
            || ( a.dynamic_asset_data_id(d).current_supply == 0 ) 
-           || !( old_options.flags & disable_modify_max_supply ) ),
+           || !( a.options.flags & disable_modify_max_supply ) ),
            "Modification of the maximum supply is forbidden by permission flag." );
    
    asset_to_update = &a;
@@ -351,7 +345,6 @@ void_result asset_update_evaluator::do_apply(const asset_update_operation& o)
    d.modify(*asset_to_update, [&o](asset_object& a) {
       if( o.new_issuer )
          a.issuer = *o.new_issuer;
-
       a.options = o.new_options;
    });
 
