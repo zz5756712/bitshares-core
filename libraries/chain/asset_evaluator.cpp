@@ -149,14 +149,7 @@ object_id_type asset_create_evaluator::do_apply( const asset_create_operation& o
          a.symbol = op.symbol;
          a.precision = op.precision;
          a.options = op.common_options;
-         /*
-         // check if the disable_modify_max_supply flag was set, if so remove the permission to modify it
-         if( a.options.flags & disable_modify_max_supply )
-            a.options.issuer_permissions -= disable_modify_max_supply;
-         // check if the disable_issue flag was set, if so remove the permission to modify it
-         if( a.options.flags & disable_issue )
-            a.options.issuer_permissions -= disable_issue;
-         */
+         
          if( a.options.core_exchange_rate.base.asset_id.instance.value == 0 )
             a.options.core_exchange_rate.quote.asset_id = next_asset_id;
          else
@@ -358,21 +351,6 @@ void_result asset_update_evaluator::do_apply(const asset_update_operation& o)
    d.modify(*asset_to_update, [&o](asset_object& a) {
       if( o.new_issuer )
          a.issuer = *o.new_issuer;
-
-      asset_options new_options = o.new_options;
-
-      /*      
-      // check if the disable_modify_max_supply flag was set, if so remove the permission to modify it
-      if( ( ( a.options.flags & disable_modify_max_supply ) == 0 ) // old/current flag state: disable_modify_max_supply == off
-       && ( ( new_options.flags & disable_modify_max_supply ) == disable_modify_max_supply ) ) // new flag state: disable_modify_max_supply == on
-         new_options.issuer_permissions -= disable_modify_max_supply;
-      
-      if( ( ( a.options.flags & disable_issue ) == 0 ) 
-       && ( ( new_options.flags & disable_issue ) == disable_issue ) )
-         new_options.issuer_permissions -= disable_issue;
-      */
-
-      //a.options = new_options;
 
       a.options = o.new_options;
    });
