@@ -2373,7 +2373,7 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
    generate_blocks( HARDFORK_572_TIME + fc::seconds(20) );
    generate_block();
 
-   edump( ("Creating an asset: disable_modify_max_supply_flag == 0") );
+   edump( ("Creating a test asset.") );
    {
       asset_options a_opt; 
       a_opt.max_supply         = 1000;
@@ -2401,7 +2401,7 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
       BOOST_CHECK( test1_asset.can_modify_max_supply() );
    }
 
-   edump( ( "Modifying the maximum supply: disable_modify_max_supply flag == 0" ) );
+   edump( ( "Modifying the maximum supply." ) );
    {
       asset_options a_opt;
       a_opt.max_supply         = 2000;
@@ -2422,12 +2422,13 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
       BOOST_CHECK( test1_asset.options.max_supply == 2000 );
    }
 
-   edump( ( "Setting disable_modify_max_supply_flag: disable_modify_max_supply flag = 0x200" ) );
+   edump( ( "Setting disable_modify_max_supply flag and removing permission to modify the flag.") );
    {
       asset_options a_opt;
       a_opt.max_supply         = 2000;
       a_opt.core_exchange_rate = test1_asset.options.core_exchange_rate;
       a_opt.flags              = disable_modify_max_supply;
+      a_opt.issuer_permissions-= disable_modify_max_supply;
 
       asset_update_operation auop;
       auop.fee             = asset(0);
@@ -2446,7 +2447,7 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
       BOOST_CHECK( !test1_asset.can_modify_max_supply() );
    }
 
-   edump( ( "Trying to disable the disable_modify_max_supply_flag: disable_modify_max_supply flag = 0x200") );
+   edump( ( "Trying to deactivate disable_modify_max_supply flag.") );
    {
       asset_options a_opt;
       a_opt.max_supply         = 2000;
@@ -2466,8 +2467,7 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
       GRAPHENE_REQUIRE_THROW( PUSH_TX( db, trx, ~0 ), fc::assert_exception );
    }
 
-   edump( ( "Trying to change the maximum supply: disble_modify_max_supply flag = 0x200;
-   current_supply = 0 -> max_supply should still be modifiable." ) );
+   edump( ( "Trying to change the maximum supply. Should be modifiable (current_supply = 0)." ) );
    {
       asset_options a_opt;
       a_opt.max_supply         = 1000;
@@ -2489,7 +2489,7 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
       BOOST_CHECK( test1_asset.options.max_supply == 1000 );
    }
 
-   edump( ( "Issue half of the maximum supply of the test asset." ) );
+   edump( ( "Issuing half of the max_supply." ) );
    {
       test1_asset = db.get(test1_asset_id);
       asset_issue_operation aiop;
@@ -2509,8 +2509,7 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
       BOOST_CHECK( test1_asset.dynamic_asset_data_id(db).current_supply != 0 );
    }
 
-   edump( ( "Try to change the max_supply after asset was issued: disable_modify_max_supply flag = 0x200;
-   max_supply can't be modified.") )
+   edump( ( "Trying to change the max_supply (current_supply > 0, should fail now).") )
    {
       asset_options a_opt;
       a_opt.max_supply         = 2000;
@@ -2530,13 +2529,15 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
       GRAPHENE_REQUIRE_THROW( PUSH_TX( db, trx, ~0 ), fc::assert_exception );
    }
 
-   edump( ( "Set the disable_issue flag and try to issue the asset.") );
+   edump( ( "Setting the disable_issue flag, removing permission for the flag and trying to issue the asset.") );
    {
+      // setting flag & removing permission
       test1_asset = db.get(test1_asset_id);
       asset_options a_opt;
       a_opt.max_supply         = test1_asset.options.max_supply;
       a_opt.core_exchange_rate = test1_asset.options.core_exchange_rate;
       a_opt.flags              = disable_modify_max_supply | disable_issue;
+      a_opt.issuer_permissions-= disable_issue;
 
       asset_update_operation auop;
       auop.fee             = asset(0);
@@ -2547,12 +2548,9 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
       trx = signed_transaction();
       set_expiration(db, trx);
       trx.operations.push_back( auop );
-      try {
-         PUSH_TX( db, trx, ~0 );
-      } catch (fc::assert_exception &e) {
-         edump( (e.to_detail_string()) );
-      }
+      PUSH_TX( db, trx, ~0 );
 
+      // trying to issue
       asset_issue_operation aiop;
       aiop.fee              = asset(0);
       aiop.issuer           = alice_id;
@@ -2562,6 +2560,22 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
       trx = signed_transaction();
       set_expiration(db, trx);
       trx.operations.push_back( aiop );
+      GRAPHENE_REQUIRE_THROW( PUSH_TX( db, trx, ~0 ), fc::assert_exception );
+
+      // trying to deactivate the flag
+      test1_asset = db.get(test1_asset_id);
+      a_opt.max_supply         = test1_asset.options.max_supply;
+      a_opt.core_exchange_rate = test1_asset.options.core_exchange_rate;
+      a_opt.flags              = disable_modify_max_supply;
+
+      auop.fee             = asset(0);
+      auop.issuer          = alice_id;
+      auop.asset_to_update = test1_asset.get_id();
+      auop.new_options     = a_opt;
+
+      trx = signed_transaction();
+      set_expiration(db, trx);
+      trx.operations.push_back( auop );
       GRAPHENE_REQUIRE_THROW( PUSH_TX( db, trx, ~0 ), fc::assert_exception );
    }
 
@@ -2583,13 +2597,8 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
       
       set_expiration(db, trx);
       trx.operations.push_back( acop );
-      try{
       PUSH_TX( db, trx, ~0 );
-      }
-      catch(fc::assert_exception &e)
-      {
-         edump((e.to_detail_string()));
-      }
+
       // getting asset_obj from db
       const auto& idx = db.get_index_type<asset_index>();
          idx.inspect_all_objects( [&](const object& obj){
@@ -2602,9 +2611,6 @@ BOOST_AUTO_TEST_CASE( disable_modify_max_supply_flag_test )
 
       BOOST_CHECK( !test2_asset.can_modify_max_supply() );
       BOOST_CHECK( !test2_asset.can_issue() );
-      // on creation the permissions should normally be removed
-      BOOST_CHECK( !(test2_asset.options.issuer_permissions & disable_modify_max_supply) );
-      BOOST_CHECK( !(test2_asset.options.issuer_permissions & disable_issue) );
 
       asset_issue_operation aiop;
       aiop.fee              = asset(0);
