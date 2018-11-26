@@ -834,6 +834,12 @@ void database::process_bids( const asset_bitasset_data_object& bad )
    while( covered < bdd.current_supply && itr != bid_idx.end() && itr->inv_swan_price.quote.asset_id == to_revive_id )
    {
       const collateral_bid_object& bid = *itr;
+      if( bid.inv_swan_price.quote.amount > bdd.current_supply )
+      {
+         modify( bid, [&bdd]( collateral_bid_object& cbo ) {
+            cbo.inv_swan_price.quote.amount = bdd.current_supply;
+         });
+      }
       asset total_collateral = bid.inv_swan_price.quote * bad.settlement_price;
       total_collateral += bid.inv_swan_price.base;
       price call_price = price::call_price( bid.inv_swan_price.quote, total_collateral, bad.current_feed.maintenance_collateral_ratio );
