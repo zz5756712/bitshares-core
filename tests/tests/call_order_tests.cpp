@@ -354,7 +354,7 @@ BOOST_AUTO_TEST_CASE( mpa_supply_test )
    ACTORS( (feeder)(borrower) );
    fund( borrower, asset( BILLION ) );
 
-   generate_blocks( HARDFORK_CORE_216_TIME );
+   generate_blocks( fc::time_point::now() );
    generate_block();
 
    set_expiration( db, trx );
@@ -370,36 +370,62 @@ BOOST_AUTO_TEST_CASE( mpa_supply_test )
 
    borrow( borrower_id, bitusd.amount( GRAPHENE_MAX_SHARE_SUPPLY / 2 ), asset( GRAPHENE_MAX_SHARE_SUPPLY * 10 / BILLION ) );
    borrow( borrower_id, bitusd.amount( GRAPHENE_MAX_SHARE_SUPPLY / 2 ), asset( GRAPHENE_MAX_SHARE_SUPPLY * 10 / BILLION ) );
-   borrow( borrower_id, bitusd.amount( GRAPHENE_MAX_SHARE_SUPPLY / 2 ), asset( GRAPHENE_MAX_SHARE_SUPPLY * 10 / BILLION ) );
-   borrow( borrower_id, bitusd.amount( GRAPHENE_MAX_SHARE_SUPPLY / 2 ), asset( GRAPHENE_MAX_SHARE_SUPPLY * 10 / BILLION ) );
+   GRAPHENE_REQUIRE_THROW( borrow( borrower_id, bitusd.amount( 1 ),
+                                   asset( GRAPHENE_MAX_SHARE_SUPPLY * 10 / BILLION ) ), fc::assert_exception );
+
+   trx.clear();
+   call_order_update_operation cup;
+   cup.funding_account = borrower_id;
+   cup.delta_collateral = asset( GRAPHENE_MAX_SHARE_SUPPLY * 10 / BILLION );
+   cup.delta_debt = bitusd.amount( 1 );
+   proposal_create_operation pop;
+   pop.proposed_ops.emplace_back( cup );
+   pop.fee_paying_account = borrower_id;
+   pop.expiration_time = db.head_block_time() + fc::days(1);
+   trx.operations.push_back( pop );
+   sign( trx, borrower_private_key );
+   GRAPHENE_REQUIRE_THROW( PUSH_TX( db, trx ), fc::assert_exception );
+   trx.clear();
 
    generate_block();
 
-   BOOST_CHECK( usd_id( db ).dynamic_asset_data_id( db ).current_supply.value > GRAPHENE_MAX_SHARE_SUPPLY );
+   BOOST_CHECK( usd_id( db ).dynamic_asset_data_id( db ).current_supply.value == GRAPHENE_MAX_SHARE_SUPPLY );
 
    const auto& btc = create_bitasset( "BTCUSD", feeder_id, 0, 0, 8, usd_id );
    const asset_id_type btc_id = btc.id;
    update_feed_producers( btc, { feeder_id } );
 
-   feed.maintenance_collateral_ratio = 1001;
-   feed.settlement_price = btc.amount( 1 ) / usd_id( db ).amount( 1 );
+   feed.maintenance_collateral_ratio = 1100;
+   feed.maximum_short_squeeze_ratio = 1001;
+   feed.settlement_price = btc.amount( 1101 ) / usd_id( db ).amount( 1000 );
    feed.core_exchange_rate = btc.amount( 1 ) / asset( 1 );
    publish_feed( btc, feeder, feed );
 
-   borrow( borrower_id, btc_id( db ).amount( GRAPHENE_MAX_SHARE_SUPPLY - 10 ),
-                        usd_id( db ).amount( GRAPHENE_MAX_SHARE_SUPPLY * 11 / 10 ) );
-   borrow( borrower_id, btc_id( db ).amount( 20 ),
-                        usd_id( db ).amount( 30 ) );
+   borrow( borrower_id, btc_id( db ).amount( GRAPHENE_MAX_SHARE_SUPPLY - 1 ),
+                        usd_id( db ).amount( GRAPHENE_MAX_SHARE_SUPPLY - 10 ) );
+   GRAPHENE_REQUIRE_THROW( borrow( borrower_id, btc_id( db ).amount( 2 ), usd_id( db ).amount( 10 ) ), fc::assert_exception );
+
+   trx.clear();
+   cup.delta_collateral = usd_id( db ).amount( 10 );
+   cup.delta_debt = btc_id( db ).amount( 2 );
+   pop.proposed_ops.clear();
+   pop.proposed_ops.emplace_back( cup );
+   trx.operations.push_back( pop );
+   sign( trx, borrower_private_key );
+   GRAPHENE_REQUIRE_THROW( PUSH_TX( db, trx ), fc::assert_exception );
+   trx.clear();
+
+   borrow( borrower_id, btc_id( db ).amount( 1 ), usd_id( db ).amount( 10 ) );
 
    generate_block();
 
-   BOOST_CHECK( btc_id( db ).dynamic_asset_data_id( db ).current_supply.value > GRAPHENE_MAX_SHARE_SUPPLY );
+   BOOST_CHECK( btc_id( db ).dynamic_asset_data_id( db ).current_supply.value == GRAPHENE_MAX_SHARE_SUPPLY );
 
-   force_settle( borrower_id, btc_id( db ).amount( GRAPHENE_MAX_SHARE_SUPPLY - 1 ) );
+   force_settle( borrower_id, btc_id( db ).amount( GRAPHENE_MAX_SHARE_SUPPLY ) );
 
    generate_blocks( db.head_block_time() + (*btc_id( db ).bitasset_data_id)( db ).options.force_settlement_delay_sec - 5 );
 
-   feed.settlement_price = btc.amount( 1000 ) / usd_id( db ).amount( 1001 );
+   feed.settlement_price = btc.amount( 1000 ) / usd_id( db ).amount( 1000 );
    publish_feed( btc_id( db ), feeder, feed );
 
    generate_block( 2 );
