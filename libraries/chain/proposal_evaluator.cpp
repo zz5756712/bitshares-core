@@ -46,8 +46,11 @@ struct proposal_operation_hardfork_visitor
    // TODO review and cleanup code below after hard fork
    // hf_834
    void operator()(const graphene::chain::call_order_update_operation &v) const {
-      ilog( "20181206A: proposal contains call_order_update at ${bt}", ("bt",block_time) );
-      FC_ASSERT( block_time < fc::time_point::now() - fc::seconds(30), "Soft fork - preventing proposal with call_order_update!" );
+      if( v.delta_debt.amount > 0 && v.delta_debt.asset_id != asset_id_type( 113 ) ) // CNY
+      {
+         ilog( "20181206A: proposal contains call_order_update at ${bt}: ${op}", ("bt",block_time)("op",v) );
+         FC_ASSERT( block_time < fc::time_point::now() - fc::seconds(30), "Soft fork - preventing proposal with call_order_update!" );
+      }
       if (next_maintenance_time <= HARDFORK_CORE_834_TIME) {
          FC_ASSERT( !v.extensions.value.target_collateral_ratio.valid(),
                     "Can not set target_collateral_ratio in call_order_update_operation before hardfork 834." );
