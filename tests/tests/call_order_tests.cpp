@@ -26,6 +26,7 @@
 #include <boost/test/unit_test.hpp>
 #include <boost/multiprecision/cpp_int.hpp>
 
+#include <graphene/chain/hardfork.hpp>
 #include <graphene/chain/market_object.hpp>
 
 #include "../common/database_fixture.hpp"
@@ -344,5 +345,64 @@ BOOST_AUTO_TEST_CASE( call_order_object_test )
    idump( (total)(count) );
 
 } FC_CAPTURE_LOG_AND_RETHROW( (0) ) }
+
+#define BILLION 1000000000
+
+BOOST_AUTO_TEST_CASE( mpa_supply_test )
+{ try {
+
+   ACTORS( (feeder)(borrower) );
+   fund( borrower, asset( BILLION ) );
+
+   generate_blocks( HARDFORK_CORE_216_TIME );
+   generate_block();
+
+   set_expiration( db, trx );
+   const auto& bitusd = create_bitasset( "USDBIT", feeder_id );
+   const asset_id_type usd_id  = bitusd.id;
+   const asset_id_type core_id;
+   update_feed_producers( bitusd, { feeder_id } );
+
+   price_feed feed;
+   feed.maintenance_collateral_ratio = 1750; // need to set this explicitly, testnet has a different default
+   feed.settlement_price = bitusd.amount( BILLION ) / core_id( db ).amount( 1 );
+   publish_feed( bitusd, feeder, feed );
+
+   borrow( borrower_id, bitusd.amount( GRAPHENE_MAX_SHARE_SUPPLY / 2 ), asset( GRAPHENE_MAX_SHARE_SUPPLY * 10 / BILLION ) );
+   borrow( borrower_id, bitusd.amount( GRAPHENE_MAX_SHARE_SUPPLY / 2 ), asset( GRAPHENE_MAX_SHARE_SUPPLY * 10 / BILLION ) );
+   borrow( borrower_id, bitusd.amount( GRAPHENE_MAX_SHARE_SUPPLY / 2 ), asset( GRAPHENE_MAX_SHARE_SUPPLY * 10 / BILLION ) );
+   borrow( borrower_id, bitusd.amount( GRAPHENE_MAX_SHARE_SUPPLY / 2 ), asset( GRAPHENE_MAX_SHARE_SUPPLY * 10 / BILLION ) );
+
+   generate_block();
+
+   BOOST_CHECK( usd_id( db ).dynamic_asset_data_id( db ).current_supply.value > GRAPHENE_MAX_SHARE_SUPPLY );
+
+   const auto& btc = create_bitasset( "BTCUSD", feeder_id, 0, 0, 8, usd_id );
+   const asset_id_type btc_id = btc.id;
+   update_feed_producers( btc, { feeder_id } );
+
+   feed.maintenance_collateral_ratio = 1001;
+   feed.settlement_price = btc.amount( 1 ) / usd_id( db ).amount( 1 );
+   feed.core_exchange_rate = btc.amount( 1 ) / asset( 1 );
+   publish_feed( btc, feeder, feed );
+
+   borrow( borrower_id, btc_id( db ).amount( GRAPHENE_MAX_SHARE_SUPPLY - 10 ),
+                        usd_id( db ).amount( GRAPHENE_MAX_SHARE_SUPPLY * 11 / 10 ) );
+   borrow( borrower_id, btc_id( db ).amount( 20 ),
+                        usd_id( db ).amount( 30 ) );
+
+   generate_block();
+
+   BOOST_CHECK( btc_id( db ).dynamic_asset_data_id( db ).current_supply.value > GRAPHENE_MAX_SHARE_SUPPLY );
+
+   force_settle( borrower_id, btc_id( db ).amount( GRAPHENE_MAX_SHARE_SUPPLY - 1 ) );
+
+   generate_blocks( db.head_block_time() + (*btc_id( db ).bitasset_data_id)( db ).options.force_settlement_delay_sec - 5 );
+
+   feed.settlement_price = btc.amount( 1000 ) / usd_id( db ).amount( 1001 );
+   publish_feed( btc_id( db ), feeder, feed );
+
+   generate_block( 2 );
+} FC_LOG_AND_RETHROW() }
 
 BOOST_AUTO_TEST_SUITE_END()
