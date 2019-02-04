@@ -57,11 +57,6 @@ struct proposal_operation_hardfork_visitor
    }
    // hf_620
    void operator()(const graphene::chain::asset_create_operation &v) const {
-      if (block_time < HARDFORK_CORE_620_TIME) {
-         static const std::locale &loc = std::locale::classic();
-         FC_ASSERT(isalpha(v.symbol.back(), loc), "Asset ${s} must end with alpha character before hardfork 620", ("s", v.symbol));
-      }
-
       detail::check_asset_options_hf_1268(block_time, v.common_options);
    }
    // hf_1268
